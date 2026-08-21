@@ -43,6 +43,11 @@ APP_ALIASES = {
     "настройки": "настройки",
 }
 
+_SITE_WORDS = {
+    "youtube", "ютуб", "google", "гугл", "github", "гитхаб", "vk", "вк",
+    "reddit", "реддит", "twitch", "твич",
+}
+
 
 def _parse_tool_result(raw: str) -> dict[str, Any]:
     try:
@@ -60,35 +65,64 @@ def _clean(text: str) -> str:
     return text
 
 
-def _known_app_from_text(text: str) -> str | None:
+def _strip_fillers(target: str) -> str:
+    target = target.strip()
+    target = re.sub(r"^(?:мне\s+|пожалуйста\s+)", "", target)
+    target = re.sub(r"^(?:активное\s+)?окно\s+(?:на\s+|в\s+)?", "", target)
+    target = re.sub(r"^(?:приложение|программу)\s+", "", target)
+    return target.strip(" .,:;!?")
+
+
+def _app_from_open_text(text: str) -> str | None:
     s = _clean(text)
     m = re.match(r"^(?:пожалуйста\s+)?(?:открой|запусти)\s+(.+)$", s)
     if not m:
         return None
-    target = m.group(1).strip()
-    if target.startswith(("папку ", "папка ", "сайт ", "страницу ", "ссылку ")):
+
+    target = _strip_fillers(m.group(1))
+    if not target:
         return None
-    return APP_ALIASES.get(target)
+
+    # Папки/файлы/сайты должны попасть в соответствующие tools, а не в launcher.
+    if target.startswith(("папку ", "папка ", "файл ", "сайт ", "страницу ", "ссылку ", "url ")):
+        return None
+    if target in _SITE_WORDS or target.startswith(("youtube ", "ютуб ", "http ", "https ", "www ")):
+        return None
+
+    return APP_ALIASES.get(target, target)
 
 
 def _focus_app_from_text(text: str) -> str | None:
     s = _clean(text)
+
+    # Сначала известные aliases. Это надёжно чинит голосовые варианты вроде «Хромиум».
     focus_verbs = (
-        "переключи",
-        "переключись",
-        "перейди",
-        "вернись",
-        "покажи",
-        "сфокусируй",
-        "сфокусируйся",
+        "переключи", "переключись", "перейди", "вернись",
+        "покажи", "сфокусируй", "сфокусируйся",
     )
     if not any(v in s for v in focus_verbs):
         return None
 
-    # Более длинные aliases проверяем первыми.
     for alias in sorted(APP_ALIASES, key=len, reverse=True):
         if alias in s:
             return APP_ALIASES[alias]
+
+    # Затем извлекаем произвольное человеческое имя приложения. Например:
+    # «переключись на Obsidian» -> Obsidian, без LLM и без списка aliases.
+    patterns = [
+        r"^(?:пожалуйста\s+)?переключись\s+(?:на|в)\s+(.+)$",
+        r"^(?:пожалуйста\s+)?переключи\s+(?:активное\s+)?окно\s+(?:на|в)\s+(.+)$",
+        r"^(?:пожалуйста\s+)?перейди\s+(?:на|в)\s+(.+)$",
+        r"^(?:пожалуйста\s+)?вернись\s+(?:на|в)\s+(.+)$",
+        r"^(?:пожалуйста\s+)?сфокусируйся\s+(?:на|в)\s+(.+)$",
+        r"^(?:пожалуйста\s+)?сфокусируй\s+(?:окно\s+)?(?:на|в)?\s*(.+)$",
+    ]
+    for pattern in patterns:
+        m = re.match(pattern, s)
+        if m:
+            target = _strip_fillers(m.group(1))
+            if target:
+                return APP_ALIASES.get(target, target)
 
     if "браузер" in s or "окно браузера" in s:
         return "browser"
@@ -105,7 +139,11 @@ def _fast_tool_call(app, tool_name: str, args: dict[str, Any], success_text: str
         f"[yellow]⚡ {escape(tool_name)}[/yellow] [dim]{escape(json.dumps(args, ensure_ascii=False))}[/dim]",
     )
 
-    answer = success_text or message if data.get("ok") else f"Не получилось: {message}"
+    if data.get("ok"):
+        answer = success_text or message
+    else:
+        answer = f"Не получилось: {message}"
+
     app.call_from_thread(
         app.chat.write,
         f"[bold green]JARVIS:[/bold green] {escape(answer)} [dim](локально, 0 токенов)[/dim]",
@@ -117,7 +155,7 @@ def _fast_tool_call(app, tool_name: str, args: dict[str, Any], success_text: str
 def try_fast_action(app, text: str) -> bool:
     s = _clean(text)
 
-    app_name = _known_app_from_text(text)
+    app_name = _app_from_open_text(text)
     if app_name:
         return _fast_tool_call(
             app,
