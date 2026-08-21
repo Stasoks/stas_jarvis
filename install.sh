@@ -5,26 +5,27 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DATA="$HOME/.local/share/stas-jarvis"
 CONFIG_DIR="$HOME/.config/stas-jarvis"
 
-echo "[1/7] Системные зависимости"
+echo "[1/8] Системные зависимости"
 sudo apt update
 sudo apt install -y \
   python3 python3-venv python3-pip python3-dev build-essential \
   curl unzip ffmpeg \
   libportaudio2 portaudio19-dev libasound2-dev alsa-utils \
   espeak-ng playerctl brightnessctl xdg-utils wmctrl xdotool \
+  gnome-screenshot \
   libgtk-3-0 libnss3 libxss1 libasound2
 
-echo "[2/7] Python venv"
+echo "[2/8] Python venv"
 cd "$ROOT"
 python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install -U pip setuptools wheel
 pip install -e .
 
-echo "[3/7] Chromium для управляемого браузера"
+echo "[3/8] Chromium для управляемого браузера"
 python -m playwright install chromium
 
-echo "[4/7] Русская Vosk-модель для wake-word"
+echo "[4/8] Русская Vosk-модель для wake-word"
 mkdir -p "$DATA/models/vosk"
 if [ ! -d "$DATA/models/vosk/vosk-model-small-ru-0.22" ]; then
   curl -L \
@@ -33,7 +34,7 @@ if [ ! -d "$DATA/models/vosk/vosk-model-small-ru-0.22" ]; then
   unzip -q -o /tmp/vosk-model-small-ru-0.22.zip -d "$DATA/models/vosk"
 fi
 
-echo "[5/7] Русский Piper voice"
+echo "[5/8] Русский Piper voice"
 mkdir -p "$DATA/models/piper"
 PIPER_BASE="https://huggingface.co/rhasspy/piper-voices/resolve/main/ru/ru_RU/ruslan/medium"
 if [ ! -f "$DATA/models/piper/ru_RU-ruslan-medium.onnx" ]; then
