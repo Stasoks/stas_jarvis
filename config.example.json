@@ -1,0 +1,70 @@
+{
+  "active_provider": "openrouter",
+  "providers": {
+    "lmstudio": {
+      "base_url": "http://127.0.0.1:1234/v1",
+      "api_key_env": "",
+      "model": "qwen3.5-4b",
+      "timeout_sec": 120
+    },
+    "openrouter": {
+      "base_url": "https://openrouter.ai/api/v1",
+      "api_key_env": "OPENROUTER_API_KEY",
+      "model": "poolside/laguna-s-2.1:free",
+      "timeout_sec": 120
+    }
+  },
+  "voice": {
+    "enabled": true,
+    "wake_words": [
+      "джарвис",
+      "жарвис",
+      "джервис",
+      "жервис",
+      "jarvis",
+      "jervis"
+    ],
+    "wake_fuzzy_threshold": 82,
+    "vosk_model_path": "~/.local/share/stas-jarvis/models/vosk/vosk-model-small-ru-0.22",
+    "whisper_model": "small",
+    "whisper_device": "cpu",
+    "whisper_compute_type": "int8",
+    "sample_rate": 16000,
+    "command_max_seconds": 25,
+    "command_wait_seconds": 7,
+    "silence_seconds": 1.0,
+    "min_rms_threshold": 120,
+    "whisper_model_dir": "~/.local/share/stas-jarvis/models/whisper",
+    "input_device": null,
+    "vad_aggressiveness": 1,
+    "pre_roll_ms": 900,
+    "post_speech_silence_ms": 1100,
+    "normalize_audio": true,
+    "whisper_initial_prompt": "Русская голосовая команда для персонального ассистента Джарвис. Команды произносятся естественно и могут начинаться сразу после слова Джарвис. Частые слова и фразы: открой, закрой, открой папку, папка с проектами, загрузки, документы, рабочий стол, браузер, Firefox, Chrome, Telegram, YouTube, музыка, следующий трек, предыдущий трек, поставь на паузу, громкость, яркость, терминал, файлы, LM Studio, OpenRouter, GitHub, Python.",
+    "whisper_hotwords": "Джарвис открой закрой папка проекты загрузки документы рабочий стол браузер Firefox Chrome Telegram YouTube музыка трек пауза громкость яркость терминал файлы LM Studio OpenRouter GitHub Python",
+    "wake_to_command_grace_ms": 0
+  },
+  "tts": {
+    "enabled": true,
+    "piper_model_path": "~/.local/share/stas-jarvis/models/piper/ru_RU-ruslan-medium.onnx",
+    "fallback_espeak_voice": "ru"
+  },
+  "browser": {
+    "headless": false
+  },
+  "agent": {
+    "max_tool_rounds": 8,
+    "history_messages": 24
+  },
+  "tools": {
+    "allowed_roots": [
+      "~"
+    ],
+    "allow_shell": true,
+    "shell_timeout_sec": 30
+  },
+  "ui": {
+    "speak_responses": true
+  },
+  "fallback_provider": "lmstudio"
+}
