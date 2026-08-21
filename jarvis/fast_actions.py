@@ -11,16 +11,24 @@ APP_ALIASES = {
     "visual studio code": "Visual Studio Code",
     "vs code": "Visual Studio Code",
     "vscode": "Visual Studio Code",
+    "вс код": "Visual Studio Code",
     "код": "Visual Studio Code",
     "телеграм": "Telegram",
     "telegram": "Telegram",
     "файрфокс": "Firefox",
     "firefox": "Firefox",
     "хром": "Google Chrome",
+    "гугл хром": "Google Chrome",
     "chrome": "Google Chrome",
     "google chrome": "Google Chrome",
     "chromium": "Chromium",
+    "хромиум": "Chromium",
+    "хромиум браузер": "Chromium",
+    "браузер хромиум": "Chromium",
+    "веб браузер chromium": "Chromium",
+    "chromium browser": "Chromium",
     "браузер": "browser",
+    "веб браузер": "browser",
     "терминал": "терминал",
     "калькулятор": "калькулятор",
     "файлы": "файлы",
@@ -45,7 +53,8 @@ def _parse_tool_result(raw: str) -> dict[str, Any]:
 
 
 def _clean(text: str) -> str:
-    text = text.casefold().strip()
+    text = text.casefold().replace("ё", "е").strip()
+    text = text.replace("—", " ").replace("–", " ").replace("-", " ")
     text = re.sub(r"[.!?]+$", "", text).strip()
     text = re.sub(r"\s+", " ", text)
     return text
@@ -57,7 +66,6 @@ def _known_app_from_text(text: str) -> str | None:
     if not m:
         return None
     target = m.group(1).strip()
-    # Avoid stealing folder/site requests from the LLM/tool router.
     if target.startswith(("папку ", "папка ", "сайт ", "страницу ", "ссылку ")):
         return None
     return APP_ALIASES.get(target)
@@ -65,9 +73,6 @@ def _known_app_from_text(text: str) -> str | None:
 
 def _focus_app_from_text(text: str) -> str | None:
     s = _clean(text)
-
-    # Keep this deterministic. These are exactly the phrases that should never
-    # cost four LLM rounds just to discover a visible window.
     focus_verbs = (
         "переключи",
         "переключись",
@@ -80,15 +85,13 @@ def _focus_app_from_text(text: str) -> str | None:
     if not any(v in s for v in focus_verbs):
         return None
 
-    # Prefer longer aliases first so "visual studio code" wins before "код".
+    # Более длинные aliases проверяем первыми.
     for alias in sorted(APP_ALIASES, key=len, reverse=True):
         if alias in s:
             return APP_ALIASES[alias]
 
-    # Natural generic-browser wording.
     if "браузер" in s or "окно браузера" in s:
         return "browser"
-
     return None
 
 
@@ -102,11 +105,7 @@ def _fast_tool_call(app, tool_name: str, args: dict[str, Any], success_text: str
         f"[yellow]⚡ {escape(tool_name)}[/yellow] [dim]{escape(json.dumps(args, ensure_ascii=False))}[/dim]",
     )
 
-    if data.get("ok"):
-        answer = success_text or message
-    else:
-        answer = f"Не получилось: {message}"
-
+    answer = success_text or message if data.get("ok") else f"Не получилось: {message}"
     app.call_from_thread(
         app.chat.write,
         f"[bold green]JARVIS:[/bold green] {escape(answer)} [dim](локально, 0 токенов)[/dim]",
@@ -116,12 +115,6 @@ def _fast_tool_call(app, tool_name: str, args: dict[str, Any], success_text: str
 
 
 def try_fast_action(app, text: str) -> bool:
-    """Execute obvious desktop commands without asking an LLM.
-
-    Return True when the request was handled locally, even if the OS tool
-    returned an error. The point is to avoid spending several cloud rounds on
-    deterministic actions such as launching VS Code or changing volume.
-    """
     s = _clean(text)
 
     app_name = _known_app_from_text(text)
@@ -143,7 +136,6 @@ def try_fast_action(app, text: str) -> bool:
             f"Переключаюсь на {spoken}.",
         )
 
-    # Brightness: "поставь яркость 40 процентов", "яркость 40%".
     if "яркост" in s:
         m = re.search(r"\b(\d{1,3})\s*%?", s)
         if m:
@@ -152,7 +144,6 @@ def try_fast_action(app, text: str) -> bool:
                 app, "set_brightness", {"percent": value}, f"Яркость {value} процентов."
             )
 
-    # Volume.
     if "громкост" in s or "звук" in s:
         m = re.search(r"\b(\d{1,3})\s*%?", s)
         if m:
@@ -161,7 +152,6 @@ def try_fast_action(app, text: str) -> bool:
                 app, "set_volume", {"percent": value}, f"Громкость {value} процентов."
             )
 
-    # Media controls.
     if any(x in s for x in ("следующий трек", "следующую песню", "переключи трек")):
         return _fast_tool_call(app, "media_control", {"action": "next"}, "Следующий трек.")
     if any(x in s for x in ("предыдущий трек", "предыдущую песню")):
@@ -171,16 +161,15 @@ def try_fast_action(app, text: str) -> bool:
     if any(x in s for x in ("продолжи музыку", "возобнови музыку", "включи воспроизведение")):
         return _fast_tool_call(app, "media_control", {"action": "play"}, "Продолжаю.")
 
-    # Common system toggles.
     toggles = [
-        (("выключи wi-fi", "выключи wifi", "выключи вайфай"), "wifi", "off", "Wi-Fi выключен."),
-        (("включи wi-fi", "включи wifi", "включи вайфай"), "wifi", "on", "Wi-Fi включён."),
+        (("выключи wi fi", "выключи wifi", "выключи вайфай"), "wifi", "off", "Wi-Fi выключен."),
+        (("включи wi fi", "включи wifi", "включи вайфай"), "wifi", "on", "Wi-Fi включён."),
         (("выключи bluetooth", "выключи блютуз"), "bluetooth", "off", "Bluetooth выключен."),
         (("включи bluetooth", "включи блютуз"), "bluetooth", "on", "Bluetooth включён."),
         (("включи ночной свет",), "night_light", "on", "Ночной свет включён."),
         (("выключи ночной свет",), "night_light", "off", "Ночной свет выключен."),
-        (("включи темную тему", "включи тёмную тему"), "dark_mode", "on", "Тёмная тема включена."),
-        (("выключи темную тему", "выключи тёмную тему"), "dark_mode", "off", "Тёмная тема выключена."),
+        (("включи темную тему",), "dark_mode", "on", "Тёмная тема включена."),
+        (("выключи темную тему",), "dark_mode", "off", "Тёмная тема выключена."),
     ]
     for phrases, action, value, reply in toggles:
         if any(p in s for p in phrases):
@@ -195,15 +184,12 @@ def try_fast_action(app, text: str) -> bool:
 
 
 def install_fast_actions(app_cls) -> None:
-    """Patch the TUI worker with a deterministic zero-token command layer."""
     if getattr(app_cls, "_stas_fast_actions_installed", False):
         return
 
     original = app_cls._ask_worker
 
     def patched(self, text: str):
-        # The original worker also serializes requests with this lock. For a
-        # fast action we do the same, but never invoke the LLM.
         with self.agent_lock:
             try:
                 if try_fast_action(self, text):
@@ -214,8 +200,6 @@ def install_fast_actions(app_cls) -> None:
                     f"[red]Ошибка локального действия: {escape(str(exc))}[/red]",
                 )
                 return
-
-        # Do not hold the lock while delegating: original() acquires it itself.
         return original(self, text)
 
     app_cls._ask_worker = patched
