@@ -11,10 +11,16 @@ def main():
     from .system_tools import install_system_tools
     install_system_tools()
 
+    # Нормальный фокус уже открытых приложений без LLM-археологии через
+    # xdotool/grep на несколько раундов.
+    from .window_tools import install_window_tools
+    install_window_tools()
+
     from .tui import JarvisApp
 
     # Очевидные desktop-команды (VS Code, Telegram, громкость, яркость,
-    # media controls, Wi-Fi/Bluetooth и т.д.) выполняются локально, без LLM.
+    # media controls, Wi-Fi/Bluetooth, переключение окон и т.д.) выполняются
+    # локально, без LLM.
     from .fast_actions import install_fast_actions
     install_fast_actions(JarvisApp)
 
