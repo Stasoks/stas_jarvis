@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import json
+import re
+import shlex
 import shutil
 import subprocess
+from pathlib import Path
 
 from .tools import ToolRegistry
 
@@ -20,6 +23,146 @@ def _as_bool(value) -> bool:
     if v in {"0", "false", "off", "no", "нет", "выкл", "выключить", "выключено"}:
         return False
     raise ValueError(f"Не понял булево значение: {value!r}")
+
+
+def _spawn(argv: list[str]) -> bool:
+    try:
+        subprocess.Popen(
+            argv,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+        return True
+    except Exception:
+        return False
+
+
+def _command_exists(candidate: str) -> str | None:
+    """Return an executable path for PATH names or absolute candidates."""
+    p = Path(candidate).expanduser()
+    if p.is_absolute():
+        return str(p) if p.exists() and p.is_file() else None
+    return shutil.which(candidate)
+
+
+def _robust_open_application(self: ToolRegistry, name: str) -> str:
+    """Launch desktop apps without making the LLM debug Linux packaging.
+
+    The old launcher only scanned /usr/share/applications and therefore missed
+    common Snap/Flatpak installs.  A request such as "Visual Studio Code" then
+    caused several LLM + shell rounds just to discover /snap/bin/code.
+    """
+    raw = name.strip()
+    needle = raw.casefold().strip()
+
+    # Human names -> executable candidates. Ordered from most likely to fallback.
+    aliases: dict[str, list[str]] = {
+        "visual studio code": ["code", "/snap/bin/code", "codium", "vscodium"],
+        "vs code": ["code", "/snap/bin/code", "codium", "vscodium"],
+        "vscode": ["code", "/snap/bin/code", "codium", "vscodium"],
+        "code": ["code", "/snap/bin/code", "codium", "vscodium"],
+        "телеграм": ["telegram-desktop", "/snap/bin/telegram-desktop", "telegram"],
+        "telegram": ["telegram-desktop", "/snap/bin/telegram-desktop", "telegram"],
+        "файрфокс": ["firefox", "/snap/bin/firefox"],
+        "firefox": ["firefox", "/snap/bin/firefox"],
+        "chrome": ["google-chrome", "google-chrome-stable", "chromium", "/snap/bin/chromium"],
+        "google chrome": ["google-chrome", "google-chrome-stable", "chromium", "/snap/bin/chromium"],
+        "хром": ["google-chrome", "google-chrome-stable", "chromium", "/snap/bin/chromium"],
+        "chromium": ["chromium", "/snap/bin/chromium"],
+        "терминал": ["gnome-terminal", "kgx", "xterm"],
+        "terminal": ["gnome-terminal", "kgx", "xterm"],
+        "калькулятор": ["gnome-calculator", "kcalc"],
+        "calculator": ["gnome-calculator", "kcalc"],
+        "файлы": ["nautilus", "thunar", "dolphin"],
+        "проводник": ["nautilus", "thunar", "dolphin"],
+        "steam": ["steam", "/snap/bin/steam"],
+        "стим": ["steam", "/snap/bin/steam"],
+        "discord": ["discord", "/snap/bin/discord"],
+        "дискорд": ["discord", "/snap/bin/discord"],
+        "spotify": ["spotify", "/snap/bin/spotify"],
+        "спотифай": ["spotify", "/snap/bin/spotify"],
+        "lm studio": ["lm-studio", "lmstudio", "/opt/LM Studio/lm-studio"],
+        "настройки": ["gnome-control-center"],
+        "settings": ["gnome-control-center"],
+    }
+
+    for candidate in aliases.get(needle, []):
+        exe = _command_exists(candidate)
+        if exe and _spawn([exe]):
+            return _result(True, f"Открываю {raw}", executable=exe)
+
+    # If the user already supplied an executable-ish name, try it directly.
+    for candidate in (raw, raw.lower().replace(" ", "-"), raw.lower().replace(" ", "")):
+        exe = _command_exists(candidate)
+        if exe and _spawn([exe]):
+            return _result(True, f"Открываю {raw}", executable=exe)
+
+    # Desktop entries from native packages, Snap and Flatpak.
+    desktop_dirs = [
+        Path.home() / ".local/share/applications",
+        Path("/usr/share/applications"),
+        Path("/usr/local/share/applications"),
+        Path("/var/lib/snapd/desktop/applications"),
+        Path.home() / ".local/share/flatpak/exports/share/applications",
+        Path("/var/lib/flatpak/exports/share/applications"),
+    ]
+
+    from rapidfuzz.fuzz import ratio
+
+    search_terms = [needle]
+    if needle in aliases:
+        search_terms += [Path(x).name.casefold() for x in aliases[needle]]
+
+    best: tuple[Path, str, str] | None = None
+    best_score = -1
+
+    for directory in desktop_dirs:
+        if not directory.exists():
+            continue
+        for desktop_file in directory.glob("*.desktop"):
+            try:
+                text = desktop_file.read_text(encoding="utf-8", errors="ignore")
+            except Exception:
+                continue
+
+            names = re.findall(r"^Name(?:\[[^\]]+\])?=(.+)$", text, flags=re.M)
+            exec_match = re.search(r"^Exec=(.+)$", text, flags=re.M)
+            exec_line = exec_match.group(1).strip() if exec_match else ""
+
+            labels = names[:8] + [desktop_file.stem]
+            for label in labels:
+                lc = label.casefold()
+                score = max(ratio(term, lc) for term in search_terms)
+                if any(term and term in lc for term in search_terms):
+                    score += 35
+                if any(lc and lc in term for term in search_terms):
+                    score += 15
+                if score > best_score:
+                    best_score = score
+                    best = (desktop_file, names[0] if names else desktop_file.stem, exec_line)
+
+    if best and best_score >= 55:
+        desktop_file, display, exec_line = best
+
+        # gio launch is packaging-agnostic and works with most desktop files.
+        if shutil.which("gio") and _spawn(["gio", "launch", str(desktop_file)]):
+            return _result(True, f"Открываю {display}", desktop_file=str(desktop_file))
+
+        # Last fallback: execute Exec= after removing desktop placeholders.
+        if exec_line:
+            try:
+                argv = [x for x in shlex.split(exec_line) if not re.fullmatch(r"%[fFuUdDnNickvm]", x)]
+                argv = [x.replace("%%", "%") for x in argv]
+                if argv and _spawn(argv):
+                    return _result(True, f"Открываю {display}", executable=argv[0])
+            except Exception:
+                pass
+
+    return _result(
+        False,
+        f"Не нашёл приложение '{raw}' ни в PATH, ни в Snap/Flatpak/desktop entries",
+    )
 
 
 def _system_control(self: ToolRegistry, action: str, value: str | None = None) -> str:
@@ -146,6 +289,8 @@ def install_system_tools() -> None:
     def patched_init(self, config):
         original_init(self, config)
         self._tools["system_control"] = self.system_control
+        # Replace the old launcher with the packaging-aware implementation.
+        self._tools["open_application"] = self.open_application
 
     def patched_schemas(self):
         schemas = original_schemas(self)
@@ -186,6 +331,7 @@ def install_system_tools() -> None:
         return schemas
 
     ToolRegistry.system_control = _system_control
+    ToolRegistry.open_application = _robust_open_application
     ToolRegistry.__init__ = patched_init
     ToolRegistry.schemas = patched_schemas
     ToolRegistry._stas_system_tools_installed = True
