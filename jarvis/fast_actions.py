@@ -20,6 +20,7 @@ APP_ALIASES = {
     "chrome": "Google Chrome",
     "google chrome": "Google Chrome",
     "chromium": "Chromium",
+    "браузер": "browser",
     "терминал": "терминал",
     "калькулятор": "калькулятор",
     "файлы": "файлы",
@@ -62,6 +63,35 @@ def _known_app_from_text(text: str) -> str | None:
     return APP_ALIASES.get(target)
 
 
+def _focus_app_from_text(text: str) -> str | None:
+    s = _clean(text)
+
+    # Keep this deterministic. These are exactly the phrases that should never
+    # cost four LLM rounds just to discover a visible window.
+    focus_verbs = (
+        "переключи",
+        "переключись",
+        "перейди",
+        "вернись",
+        "покажи",
+        "сфокусируй",
+        "сфокусируйся",
+    )
+    if not any(v in s for v in focus_verbs):
+        return None
+
+    # Prefer longer aliases first so "visual studio code" wins before "код".
+    for alias in sorted(APP_ALIASES, key=len, reverse=True):
+        if alias in s:
+            return APP_ALIASES[alias]
+
+    # Natural generic-browser wording.
+    if "браузер" in s or "окно браузера" in s:
+        return "browser"
+
+    return None
+
+
 def _fast_tool_call(app, tool_name: str, args: dict[str, Any], success_text: str | None = None) -> bool:
     raw = app.tools.execute(tool_name, args)
     data = _parse_tool_result(raw)
@@ -101,6 +131,16 @@ def try_fast_action(app, text: str) -> bool:
             "open_application",
             {"name": app_name},
             f"Открываю {app_name}.",
+        )
+
+    focus_name = _focus_app_from_text(text)
+    if focus_name:
+        spoken = "браузер" if focus_name == "browser" else focus_name
+        return _fast_tool_call(
+            app,
+            "focus_application",
+            {"name": focus_name},
+            f"Переключаюсь на {spoken}.",
         )
 
     # Brightness: "поставь яркость 40 процентов", "яркость 40%".
