@@ -65,8 +65,8 @@
   "agent": {
     "max_tool_rounds": 8,
     "max_tool_calls": 18,
-    "research_tool_rounds": 16,
-    "research_max_tool_calls": 36,
+    "research_tool_rounds": 12,
+    "research_max_tool_calls": 24,
     "history_messages": 8,
     "history_chars": 12000,
     "tool_result_chars": 5000
