@@ -20,19 +20,8 @@
   },
   "voice": {
     "enabled": true,
-    "wake_words": [
-      "джарвис",
-      "жарвис",
-      "джервис",
-      "жервис",
-      "jarvis",
-      "jervis"
-    ],
-    "wake_words_strict": [
-      "джарвис",
-      "жарвис",
-      "jarvis"
-    ],
+    "wake_words": ["джарвис", "жарвис", "джервис", "жервис", "jarvis", "jervis"],
+    "wake_words_strict": ["джарвис", "жарвис", "jarvis"],
     "wake_exact_only": true,
     "wake_confirmations": 3,
     "wake_cooldown_sec": 4.0,
@@ -52,8 +41,8 @@
     "pre_roll_ms": 900,
     "post_speech_silence_ms": 1100,
     "normalize_audio": true,
-    "whisper_initial_prompt": "Русская голосовая команда для персонального ассистента Джарвис. Команды произносятся естественно и могут начинаться сразу после слова Джарвис. Частые слова и фразы: открой, закрой, открой папку, папка с проектами, загрузки, документы, рабочий стол, браузер, Firefox, Chrome, Telegram, YouTube, музыка, следующий трек, предыдущий трек, поставь на паузу, громкость, яркость, терминал, файлы, LM Studio, OpenRouter, GitHub, Python.",
-    "whisper_hotwords": "Джарвис открой закрой папка проекты загрузки документы рабочий стол браузер Firefox Chrome Telegram YouTube музыка трек пауза громкость яркость терминал файлы LM Studio OpenRouter GitHub Python",
+    "whisper_initial_prompt": "Русская голосовая команда для персонального ассистента Джарвис. Команды произносятся естественно и могут начинаться сразу после слова Джарвис. Частые слова и фразы: открой, закрой, открой папку, папка с проектами, загрузки, документы, рабочий стол, браузер, Firefox, Chrome, Chromium, Хромиум, Telegram, YouTube, музыка, следующий трек, предыдущий трек, поставь на паузу, громкость, яркость, терминал, файлы, LM Studio, OpenRouter, GitHub, Python.",
+    "whisper_hotwords": "Джарвис открой закрой папка проекты загрузки документы рабочий стол браузер Firefox Chrome Chromium Хромиум Telegram YouTube музыка трек пауза громкость яркость терминал файлы LM Studio OpenRouter GitHub Python",
     "wake_to_command_grace_ms": 0
   },
   "tts": {
@@ -74,15 +63,16 @@
     "headless": false
   },
   "agent": {
-    "max_tool_rounds": 4,
+    "max_tool_rounds": 8,
+    "max_tool_calls": 18,
+    "research_tool_rounds": 16,
+    "research_max_tool_calls": 36,
     "history_messages": 8,
     "history_chars": 12000,
-    "tool_result_chars": 4000
+    "tool_result_chars": 5000
   },
   "tools": {
-    "allowed_roots": [
-      "~"
-    ],
+    "allowed_roots": ["~"],
     "allow_shell": true,
     "shell_timeout_sec": 30
   },
