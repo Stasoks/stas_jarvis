@@ -19,8 +19,8 @@ SYSTEM_PROMPT = """Ты Джарвис, локальный desktop-агент п
 Ключевые правила:
 1. Для поиска информации, исследований, свежих новостей, моделей и бенчмарков используй web_search и web_fetch.
    Они работают ФОНОВО и не открывают никаких окон.
-2. browser_open/browser_search/browser_read/browser_click/browser_fill используй ТОЛЬКО если пользователь явно
-   попросил открыть, показать или интерактивно использовать сайт/браузер. Не открывай GUI-браузер ради обычного поиска.
+2. browser_open/browser_search/browser_read/browser_click/browser_fill и open_url используй ТОЛЬКО если пользователь
+   явно попросил открыть, показать или интерактивно использовать сайт/браузер. Не открывай GUI-браузер ради обычного поиска.
 3. Для исследования не останавливайся после первого результата. Собери несколько независимых источников,
    открой релевантные страницы через web_fetch, сравни данные и в финальном ответе укажи названия/URL источников.
 4. Если пользователь спрашивает точное время/дату — вызови get_current_datetime и не угадывай.
@@ -51,6 +51,7 @@ _GUI_RE = re.compile(
 )
 
 _GUI_TOOLS = {
+    "open_url",
     "browser_open",
     "browser_search",
     "browser_read",
@@ -130,16 +131,16 @@ class Agent:
         schemas = self.tools.schemas()
         wants_gui = self._wants_gui(text)
 
-        # GUI browser tools simply do not exist from the model's point of view
-        # unless the user explicitly requested a visible browser interaction.
+        # Если пользователь не попросил ВИДИМО открыть страницу, GUI-tools для
+        # модели вообще не существуют. Значит случайно выпрыгнуть Chromium не может.
         if not wants_gui:
             schemas = [
                 s for s in schemas
                 if (s.get("function") or {}).get("name") not in _GUI_TOOLS
             ]
 
-        # Research gets a deliberately small toolset. This is cheaper and makes
-        # the model much less likely to wander into shell/browser automation.
+        # Для исследования даём маленький toolset: поиск, чтение источников и
+        # опционально работу с файлами. Это заметно дешевле полного ящика tools.
         if research and not wants_gui:
             schemas = [
                 s for s in schemas
@@ -151,11 +152,11 @@ class Agent:
     def _budgets(self, research: bool) -> tuple[int, int]:
         cfg = self.config.get("agent", {})
         if research:
-            rounds = max(12, int(cfg.get("research_tool_rounds", 16)))
-            calls = max(24, int(cfg.get("research_max_tool_calls", 36)))
-            return min(rounds, 20), min(calls, 48)
+            rounds = max(10, int(cfg.get("research_tool_rounds", 12)))
+            calls = max(20, int(cfg.get("research_max_tool_calls", 24)))
+            return min(rounds, 16), min(calls, 36)
 
-        # Старые config.json с max_tool_rounds=4 больше не душат обычные задачи.
+        # Старый max_tool_rounds=4 больше не душит обычные многошаговые задачи.
         rounds = max(6, int(cfg.get("max_tool_rounds", 8)))
         calls = max(12, int(cfg.get("max_tool_calls", 18)))
         return min(rounds, 12), min(calls, 24)
