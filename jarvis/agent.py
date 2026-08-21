@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import logging
+import re
+from collections import Counter
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -14,30 +16,59 @@ SYSTEM_PROMPT = """Ты Джарвис, локальный desktop-агент п
 
 Твоя задача не просто объяснять, а ВЫПОЛНЯТЬ просьбы через доступные tools.
 
-Правила:
-1. Если пользователь спрашивает точное время/дату — вызови get_current_datetime и не угадывай.
-2. Если пользователь просит открыть приложение, сайт, файл, включить/остановить музыку,
-   изменить громкость/яркость, что-то найти в браузере или изменить файл — используй tool.
-3. Не говори «я не могу взаимодействовать с компьютером», если для действия есть tool.
-4. Не утверждай, что действие выполнено, пока tool не вернул успех.
-5. Для браузера:
-   - browser_open/browser_search открывают страницу;
-   - browser_read читает страницу;
-   - перед кликом/вводом вызови browser_list_elements и используй ref e1/e2/...
-6. Для обычных системных настроек используй system_control. Wi-Fi, Bluetooth, ночной свет,
-   тёмная тема, режим питания, уведомления, таймаут экрана и mute микрофона обычно НЕ требуют sudo
-   в активной пользовательской сессии.
-7. Не говори пользователю «нет прав» или «не могу менять настройки», пока не попробовал подходящий
-   специализированный tool и не получил реальную ошибку от ОС.
-8. Для обычных системных действий предпочитай специализированные tools, а не run_shell.
-9. run_shell используй только когда специализированного инструмента недостаточно.
-10. Не используй sudo и не пытайся обходить safety-фильтры.
-11. Отвечай по-русски, если пользователь не попросил другой язык.
-12. После успешного действия отвечай коротко. Не пересказывай внутренний tool-loop.
-13. Не занимайся диагностикой «на всякий случай». Если специализированный tool сработал — остановись.
-14. Если tool вернул ошибку, сделай максимум одну разумную диагностическую попытку или альтернативу.
-    Не запускай длинные цепочки shell-команд без необходимости.
+Ключевые правила:
+1. Для поиска информации, исследований, свежих новостей, моделей и бенчмарков используй web_search и web_fetch.
+   Они работают ФОНОВО и не открывают никаких окон.
+2. browser_open/browser_search/browser_read/browser_click/browser_fill используй ТОЛЬКО если пользователь явно
+   попросил открыть, показать или интерактивно использовать сайт/браузер. Не открывай GUI-браузер ради обычного поиска.
+3. Для исследования не останавливайся после первого результата. Собери несколько независимых источников,
+   открой релевантные страницы через web_fetch, сравни данные и в финальном ответе укажи названия/URL источников.
+4. Если пользователь спрашивает точное время/дату — вызови get_current_datetime и не угадывай.
+5. Если пользователь просит открыть приложение, файл, включить/остановить музыку, изменить громкость/яркость
+   или изменить файл — используй соответствующий специализированный tool.
+6. Не говори «я не могу взаимодействовать с компьютером», если для действия есть tool.
+7. Не утверждай, что действие выполнено, пока tool не вернул успех.
+8. Для системных настроек используй system_control. Не говори «нет прав», пока не попробовал подходящий tool.
+9. Для переключения между уже открытыми программами используй focus_application, а не run_shell/xdotool вручную.
+10. Для обычных действий предпочитай специализированные tools, а не run_shell.
+11. run_shell используй только когда специализированного инструмента недостаточно. Не используй sudo.
+12. Отвечай по-русски, если пользователь не попросил другой язык.
+13. После успешного простого действия отвечай коротко. Для исследования, наоборот, дай содержательный итог.
+14. Не занимайся диагностикой «на всякий случай». Если специализированный tool сработал — остановись.
+15. Если один и тот же tool с теми же аргументами уже дважды не помог, измени подход, а не повторяй его бесконечно.
 """
+
+_RESEARCH_RE = re.compile(
+    r"(?:исслед|сравн|обзор|новост|свеж|недавно|последн|актуальн|релиз|выш(?:ел|ла|ли|едш)|"
+    r"бенчмарк|benchmark|модел|рынок|источник|поищи\s+информац|найди\s+информац|что\s+нового)",
+    re.IGNORECASE,
+)
+
+_GUI_RE = re.compile(
+    r"(?:открой|покажи|запусти|выведи|перейди).{0,40}(?:браузер|сайт|страниц|youtube|ютуб|url|ссылк)|"
+    r"(?:браузер|сайт|youtube|ютуб).{0,30}(?:открой|покажи)",
+    re.IGNORECASE,
+)
+
+_GUI_TOOLS = {
+    "browser_open",
+    "browser_search",
+    "browser_read",
+    "browser_list_elements",
+    "browser_click",
+    "browser_fill",
+    "browser_back",
+}
+
+_RESEARCH_TOOLS = {
+    "web_search",
+    "web_fetch",
+    "get_current_datetime",
+    "read_file",
+    "write_file",
+    "list_files",
+    "search_files",
+}
 
 
 class Agent:
@@ -45,10 +76,6 @@ class Agent:
         self.llm = llm
         self.tools = tools
         self.config = config
-
-        # В долгосрочную историю попадают ТОЛЬКО пользовательские сообщения
-        # и финальные ответы. Tool calls/results храним в jsonl для отладки,
-        # но никогда не тащим их в следующий пользовательский запрос.
         self.history: list[dict[str, Any]] = []
         self.session_path = self._new_session_path()
 
@@ -66,37 +93,92 @@ class Agent:
         self.session_path = self._new_session_path()
 
     def _history_for_request(self) -> list[dict[str, Any]]:
-        """Ограниченная разговорная история без tool-мусора."""
         agent_cfg = self.config.get("agent", {})
         max_messages = min(int(agent_cfg.get("history_messages", 8)), 10)
         max_chars = int(agent_cfg.get("history_chars", 12000))
 
         selected: list[dict[str, Any]] = []
         used = 0
-
         for msg in reversed(self.history[-max_messages:]):
             if msg.get("role") not in ("user", "assistant"):
                 continue
-
             content = str(msg.get("content") or "")
             if len(content) > 4000:
                 content = content[:4000] + "\n...[старое сообщение обрезано]"
-
             if selected and used + len(content) > max_chars:
                 break
-
             selected.append({"role": msg["role"], "content": content})
             used += len(content)
-
         selected.reverse()
         return selected
 
     def _compact_tool_result(self, result: str) -> str:
-        """Не позволяем ls/cat/browser dump раздувать каждый следующий LLM round."""
-        max_chars = int(self.config.get("agent", {}).get("tool_result_chars", 4000))
+        max_chars = int(self.config.get("agent", {}).get("tool_result_chars", 5000))
         if len(result) <= max_chars:
             return result
         return result[:max_chars] + "\n...[tool output truncated]"
+
+    @staticmethod
+    def _is_research(text: str) -> bool:
+        return bool(_RESEARCH_RE.search(text))
+
+    @staticmethod
+    def _wants_gui(text: str) -> bool:
+        return bool(_GUI_RE.search(text))
+
+    def _schemas_for_request(self, text: str, research: bool) -> list[dict[str, Any]]:
+        schemas = self.tools.schemas()
+        wants_gui = self._wants_gui(text)
+
+        # GUI browser tools simply do not exist from the model's point of view
+        # unless the user explicitly requested a visible browser interaction.
+        if not wants_gui:
+            schemas = [
+                s for s in schemas
+                if (s.get("function") or {}).get("name") not in _GUI_TOOLS
+            ]
+
+        # Research gets a deliberately small toolset. This is cheaper and makes
+        # the model much less likely to wander into shell/browser automation.
+        if research and not wants_gui:
+            schemas = [
+                s for s in schemas
+                if (s.get("function") or {}).get("name") in _RESEARCH_TOOLS
+            ]
+
+        return schemas
+
+    def _budgets(self, research: bool) -> tuple[int, int]:
+        cfg = self.config.get("agent", {})
+        if research:
+            rounds = max(12, int(cfg.get("research_tool_rounds", 16)))
+            calls = max(24, int(cfg.get("research_max_tool_calls", 36)))
+            return min(rounds, 20), min(calls, 48)
+
+        # Старые config.json с max_tool_rounds=4 больше не душат обычные задачи.
+        rounds = max(6, int(cfg.get("max_tool_rounds", 8)))
+        calls = max(12, int(cfg.get("max_tool_calls", 18)))
+        return min(rounds, 12), min(calls, 24)
+
+    def _finalize_without_tools(self, messages: list[dict[str, Any]], reason: str) -> str:
+        final_messages = list(messages)
+        final_messages.append({
+            "role": "system",
+            "content": (
+                "Бюджет инструментов на этот запрос исчерпан. Больше tools вызывать нельзя. "
+                "Сейчас обязательно сформируй лучший финальный ответ из уже собранных данных. "
+                "Не жалуйся на лимит и не обещай продолжить позже. "
+                f"Причина завершения tool-loop: {reason}."
+            ),
+        })
+        try:
+            msg = self.llm.chat(final_messages, tools=None)
+            content = str(msg.get("content") or "").strip()
+            if content:
+                return content
+        except Exception:
+            log.exception("Final synthesis after tool budget failed")
+        return "Не удалось завершить запрос после исчерпания бюджета инструментов. Подробности есть в /logs."
 
     def ask(self, text: str, on_tool=None) -> str:
         on_tool = on_tool or (lambda name, args, result: None)
@@ -105,15 +187,24 @@ class Agent:
         self.history.append(user_msg)
         self._persist(user_msg)
 
+        research = self._is_research(text)
         messages = [{"role": "system", "content": SYSTEM_PROMPT}]
         messages.extend(self._history_for_request())
+        schemas = self._schemas_for_request(text, research)
+        max_rounds, max_tool_calls = self._budgets(research)
 
-        schemas = self.tools.schemas()
+        log.info(
+            "AGENT budget research=%s rounds=%d max_tool_calls=%d schemas=%d gui=%s",
+            research,
+            max_rounds,
+            max_tool_calls,
+            len(schemas),
+            self._wants_gui(text),
+        )
 
-        # Старые config.json могли содержать 8. Жёсткий потолок 4 не даёт
-        # модели сжечь десятки запросов на одной команде.
-        configured_rounds = int(self.config.get("agent", {}).get("max_tool_rounds", 4))
-        max_rounds = max(1, min(configured_rounds, 4))
+        signature_counts: Counter[str] = Counter()
+        total_tool_calls = 0
+        stop_reason = "round limit"
 
         for round_idx in range(max_rounds):
             msg = self.llm.chat(messages, tools=schemas)
@@ -121,10 +212,7 @@ class Agent:
             content = msg.get("content") or ""
 
             if not tool_calls:
-                assistant = {
-                    "role": "assistant",
-                    "content": content.strip() or "Готово.",
-                }
+                assistant = {"role": "assistant", "content": content.strip() or "Готово."}
                 self.history.append(assistant)
                 self._persist(assistant)
                 return assistant["content"]
@@ -134,8 +222,6 @@ class Agent:
                 "content": content,
                 "tool_calls": tool_calls,
             }
-
-            # Нужен только внутри ТЕКУЩЕГО tool-loop.
             messages.append(assistant_msg)
             self._persist({
                 **assistant_msg,
@@ -146,18 +232,26 @@ class Agent:
             for tc in tool_calls:
                 fn = (tc.get("function") or {}).get("name", "")
                 raw_args = (tc.get("function") or {}).get("arguments", "{}")
-
                 try:
-                    args = (
-                        json.loads(raw_args)
-                        if isinstance(raw_args, str)
-                        else (raw_args or {})
-                    )
+                    args = json.loads(raw_args) if isinstance(raw_args, str) else (raw_args or {})
                 except json.JSONDecodeError:
                     args = {}
 
-                result = self.tools.execute(fn, args)
-                on_tool(fn, args, result)
+                signature = fn + ":" + json.dumps(args, ensure_ascii=False, sort_keys=True)
+                signature_counts[signature] += 1
+                total_tool_calls += 1
+
+                if signature_counts[signature] > 2:
+                    result = json.dumps({
+                        "ok": False,
+                        "message": (
+                            "Этот же tool с теми же аргументами уже вызывался дважды. "
+                            "Не повторяй его; измени запрос или подход."
+                        ),
+                    }, ensure_ascii=False)
+                else:
+                    result = self.tools.execute(fn, args)
+                    on_tool(fn, args, result)
 
                 compact_result = self._compact_tool_result(result)
                 tool_msg = {
@@ -166,8 +260,6 @@ class Agent:
                     "name": fn,
                     "content": compact_result,
                 }
-
-                # Тоже только текущий запрос.
                 messages.append(tool_msg)
                 self._persist({
                     **tool_msg,
@@ -175,10 +267,14 @@ class Agent:
                     "_full_result_chars": len(result),
                 })
 
-        final = (
-            "Я остановил выполнение после четырёх шагов, чтобы не зациклиться "
-            "и не сжигать токены. Посмотри `/logs`, если действие не завершилось."
-        )
+                if total_tool_calls >= max_tool_calls:
+                    stop_reason = f"tool call limit {max_tool_calls}"
+                    break
+
+            if total_tool_calls >= max_tool_calls:
+                break
+
+        final = self._finalize_without_tools(messages, stop_reason)
         assistant = {"role": "assistant", "content": final}
         self.history.append(assistant)
         self._persist(assistant)
