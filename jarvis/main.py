@@ -32,10 +32,15 @@ def main():
     from .fast_actions import install_fast_actions
     install_fast_actions(JarvisApp)
 
-    # Прямые вопросы «что на экране?» идут сразу в vision-модель, не прогоняя
+    # Прямые вопросы про экран идут сразу в vision-модель, не прогоняя
     # сначала общий agent loop.
     from .screen_fast_action import install_screen_fast_action
     install_screen_fast_action(JarvisApp)
+
+    # Диагностическая команда /screen позволяет проверить screenshot+vision
+    # вообще без основной LLM и без зависимости от формулировки запроса.
+    from .screen_cli import install_screen_cli
+    install_screen_cli(JarvisApp)
 
     JarvisApp().run()
 
