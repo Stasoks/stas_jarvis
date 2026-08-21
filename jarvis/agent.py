@@ -34,14 +34,21 @@ SYSTEM_PROMPT = """Ты Джарвис, локальный desktop-агент п
 10. Не используй sudo и не пытайся обходить safety-фильтры.
 11. Отвечай по-русски, если пользователь не попросил другой язык.
 12. После успешного действия отвечай коротко. Не пересказывай внутренний tool-loop.
-13. Если tool вернул ошибку, попробуй разумную альтернативу. Если не получилось — честно сообщи причину.
+13. Не занимайся диагностикой «на всякий случай». Если специализированный tool сработал — остановись.
+14. Если tool вернул ошибку, сделай максимум одну разумную диагностическую попытку или альтернативу.
+    Не запускай длинные цепочки shell-команд без необходимости.
 """
+
 
 class Agent:
     def __init__(self, llm, tools, config: dict):
         self.llm = llm
         self.tools = tools
         self.config = config
+
+        # В долгосрочную историю попадают ТОЛЬКО пользовательские сообщения
+        # и финальные ответы. Tool calls/results храним в jsonl для отладки,
+        # но никогда не тащим их в следующий пользовательский запрос.
         self.history: list[dict[str, Any]] = []
         self.session_path = self._new_session_path()
 
@@ -58,24 +65,66 @@ class Agent:
         self.history.clear()
         self.session_path = self._new_session_path()
 
+    def _history_for_request(self) -> list[dict[str, Any]]:
+        """Ограниченная разговорная история без tool-мусора."""
+        agent_cfg = self.config.get("agent", {})
+        max_messages = min(int(agent_cfg.get("history_messages", 8)), 10)
+        max_chars = int(agent_cfg.get("history_chars", 12000))
+
+        selected: list[dict[str, Any]] = []
+        used = 0
+
+        for msg in reversed(self.history[-max_messages:]):
+            if msg.get("role") not in ("user", "assistant"):
+                continue
+
+            content = str(msg.get("content") or "")
+            if len(content) > 4000:
+                content = content[:4000] + "\n...[старое сообщение обрезано]"
+
+            if selected and used + len(content) > max_chars:
+                break
+
+            selected.append({"role": msg["role"], "content": content})
+            used += len(content)
+
+        selected.reverse()
+        return selected
+
+    def _compact_tool_result(self, result: str) -> str:
+        """Не позволяем ls/cat/browser dump раздувать каждый следующий LLM round."""
+        max_chars = int(self.config.get("agent", {}).get("tool_result_chars", 4000))
+        if len(result) <= max_chars:
+            return result
+        return result[:max_chars] + "\n...[tool output truncated]"
+
     def ask(self, text: str, on_tool=None) -> str:
         on_tool = on_tool or (lambda name, args, result: None)
+
         user_msg = {"role": "user", "content": text}
         self.history.append(user_msg)
         self._persist(user_msg)
 
-        max_hist = int(self.config["agent"].get("history_messages", 24))
-        messages = [{"role": "system", "content": SYSTEM_PROMPT}] + self.history[-max_hist:]
-        schemas = self.tools.schemas()
-        max_rounds = int(self.config["agent"].get("max_tool_rounds", 8))
+        messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+        messages.extend(self._history_for_request())
 
-        for _ in range(max_rounds):
+        schemas = self.tools.schemas()
+
+        # Старые config.json могли содержать 8. Жёсткий потолок 4 не даёт
+        # модели сжечь десятки запросов на одной команде.
+        configured_rounds = int(self.config.get("agent", {}).get("max_tool_rounds", 4))
+        max_rounds = max(1, min(configured_rounds, 4))
+
+        for round_idx in range(max_rounds):
             msg = self.llm.chat(messages, tools=schemas)
             tool_calls = msg.get("tool_calls") or []
             content = msg.get("content") or ""
 
             if not tool_calls:
-                assistant = {"role": "assistant", "content": content.strip() or "Готово."}
+                assistant = {
+                    "role": "assistant",
+                    "content": content.strip() or "Готово.",
+                }
                 self.history.append(assistant)
                 self._persist(assistant)
                 return assistant["content"]
@@ -85,32 +134,51 @@ class Agent:
                 "content": content,
                 "tool_calls": tool_calls,
             }
+
+            # Нужен только внутри ТЕКУЩЕГО tool-loop.
             messages.append(assistant_msg)
-            self.history.append(assistant_msg)
-            self._persist(assistant_msg)
+            self._persist({
+                **assistant_msg,
+                "_internal": "tool_loop",
+                "_round": round_idx + 1,
+            })
 
             for tc in tool_calls:
                 fn = (tc.get("function") or {}).get("name", "")
                 raw_args = (tc.get("function") or {}).get("arguments", "{}")
+
                 try:
-                    args = json.loads(raw_args) if isinstance(raw_args, str) else (raw_args or {})
+                    args = (
+                        json.loads(raw_args)
+                        if isinstance(raw_args, str)
+                        else (raw_args or {})
+                    )
                 except json.JSONDecodeError:
                     args = {}
 
                 result = self.tools.execute(fn, args)
                 on_tool(fn, args, result)
 
+                compact_result = self._compact_tool_result(result)
                 tool_msg = {
                     "role": "tool",
                     "tool_call_id": tc.get("id", ""),
                     "name": fn,
-                    "content": result,
+                    "content": compact_result,
                 }
-                messages.append(tool_msg)
-                self.history.append(tool_msg)
-                self._persist(tool_msg)
 
-        final = "Я остановил tool-loop после максимального числа шагов. Посмотри `/logs`, если нужно понять, где он зациклился."
+                # Тоже только текущий запрос.
+                messages.append(tool_msg)
+                self._persist({
+                    **tool_msg,
+                    "_internal": "tool_loop",
+                    "_full_result_chars": len(result),
+                })
+
+        final = (
+            "Я остановил выполнение после четырёх шагов, чтобы не зациклиться "
+            "и не сжигать токены. Посмотри `/logs`, если действие не завершилось."
+        )
         assistant = {"role": "assistant", "content": final}
         self.history.append(assistant)
         self._persist(assistant)
