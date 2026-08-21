@@ -50,6 +50,7 @@
   },
   "tts": {
     "enabled": true,
+    "speed": 1.35,
     "piper_model_path": "~/.local/share/stas-jarvis/models/piper/ru_RU-ruslan-medium.onnx",
     "fallback_espeak_voice": "ru"
   },
