@@ -6,13 +6,18 @@ from .logging_setup import setup_logging
 def main():
     setup_logging()
 
-    # Расширяем базовый ToolRegistry безопасными системными настройками
-    # (Wi-Fi, Bluetooth, night light, power profile и т.д.) без выдачи root
-    # всему агенту.
+    # Расширяем базовый ToolRegistry безопасными системными настройками и
+    # packaging-aware запуском приложений без выдачи root всему агенту.
     from .system_tools import install_system_tools
     install_system_tools()
 
     from .tui import JarvisApp
+
+    # Очевидные desktop-команды (VS Code, Telegram, громкость, яркость,
+    # media controls, Wi-Fi/Bluetooth и т.д.) выполняются локально, без LLM.
+    from .fast_actions import install_fast_actions
+    install_fast_actions(JarvisApp)
+
     JarvisApp().run()
 
 
