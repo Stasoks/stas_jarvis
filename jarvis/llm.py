@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from typing import Any
+
 import httpx
 
 log = logging.getLogger(__name__)
@@ -11,6 +12,12 @@ class LLMClient:
     def __init__(self, config_store):
         self.config_store = config_store
         self.last_provider_used = config_store.active_provider_name
+        self.last_usage: dict[str, int] = {}
+        self.total_usage = {
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "total_tokens": 0,
+        }
 
     @property
     def provider_name(self) -> str:
@@ -33,6 +40,31 @@ class LLMClient:
             headers["X-Title"] = "Stas Jarvis"
         return headers
 
+    def _record_usage(self, provider_name: str, model: str, data: dict[str, Any]) -> None:
+        usage = data.get("usage") or {}
+        prompt = int(usage.get("prompt_tokens") or usage.get("input_tokens") or 0)
+        completion = int(usage.get("completion_tokens") or usage.get("output_tokens") or 0)
+        total = int(usage.get("total_tokens") or (prompt + completion))
+
+        self.last_usage = {
+            "prompt_tokens": prompt,
+            "completion_tokens": completion,
+            "total_tokens": total,
+        }
+        self.total_usage["prompt_tokens"] += prompt
+        self.total_usage["completion_tokens"] += completion
+        self.total_usage["total_tokens"] += total
+
+        log.info(
+            "LLM usage provider=%s model=%s prompt=%d completion=%d total=%d session_total=%d",
+            provider_name,
+            model,
+            prompt,
+            completion,
+            total,
+            self.total_usage["total_tokens"],
+        )
+
     def _chat_once(
         self,
         provider_name: str,
@@ -45,6 +77,8 @@ class LLMClient:
             "model": p["model"],
             "messages": messages,
             "stream": False,
+            "max_tokens": int(p.get("max_tokens", 800)),
+            "temperature": float(p.get("temperature", 0.2)),
         }
         if tools:
             payload["tools"] = tools
@@ -52,7 +86,10 @@ class LLMClient:
         timeout = float(p.get("timeout_sec", 120))
         log.info(
             "LLM request provider=%s model=%s messages=%d tools=%d",
-            provider_name, p["model"], len(messages), len(tools or [])
+            provider_name,
+            p["model"],
+            len(messages),
+            len(tools or []),
         )
 
         with httpx.Client(timeout=timeout, follow_redirects=True) as client:
@@ -75,6 +112,8 @@ class LLMClient:
         choices = data.get("choices") or []
         if not choices:
             raise RuntimeError(f"LLM вернула ответ без choices: {data}")
+
+        self._record_usage(provider_name, p["model"], data)
         self.last_provider_used = provider_name
         return choices[0]["message"]
 
