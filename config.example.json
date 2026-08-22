@@ -53,8 +53,11 @@
   },
   "vision": {
     "enabled": true,
+    "follow_active_provider": true,
     "provider": "openrouter",
     "model": "openrouter/free",
+    "fallback_provider": "openrouter",
+    "fallback_model": "openrouter/free",
     "max_image_side": 1280,
     "jpeg_quality": 70,
     "max_tokens": 450
