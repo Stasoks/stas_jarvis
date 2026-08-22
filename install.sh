@@ -15,13 +15,10 @@ sudo apt install -y \
   gnome-screenshot \
   libgtk-3-0 libnss3 libxss1 libasound2
 
-# Wayland computer-use backend. Optional because some older Ubuntu releases
-# don't ship ydotool in their configured repositories.
+# Full desktop input on Wayland. If ydotool is not available in this Ubuntu
+# repository, the rest of Jarvis still installs and browser Playwright works.
 if apt-cache show ydotool >/dev/null 2>&1; then
-  sudo apt install -y ydotool || true
-  if systemctl list-unit-files 2>/dev/null | grep -q '^ydotoold'; then
-    sudo systemctl enable --now ydotoold || true
-  fi
+  bash "$ROOT/scripts/setup_computer_use.sh" || true
 fi
 
 echo "[2/8] Python venv"
@@ -83,4 +80,3 @@ echo "Конфиг:    nano $CONFIG_DIR/config.json"
 echo "Запуск:    $ROOT/run.sh"
 echo
 echo "Для LM Studio сначала запусти его Local Server на 127.0.0.1:1234."
-echo "Wayland computer-use: проверить ydotool: command -v ydotool && systemctl status ydotoold"
