@@ -15,8 +15,8 @@ sudo apt install -y \
   gnome-screenshot \
   libgtk-3-0 libnss3 libxss1 libasound2
 
-# ydotool даёт реальные mouse/keyboard events на Wayland через /dev/uinput.
-# На старых Ubuntu пакета может не быть, поэтому установка optional.
+# Wayland computer-use backend. Optional because some older Ubuntu releases
+# don't ship ydotool in their configured repositories.
 if apt-cache show ydotool >/dev/null 2>&1; then
   sudo apt install -y ydotool || true
   if systemctl list-unit-files 2>/dev/null | grep -q '^ydotoold'; then
@@ -51,8 +51,6 @@ if [ ! -f "$DATA/models/piper/ru_RU-ruslan-medium.onnx" ]; then
     -o "$DATA/models/piper/ru_RU-ruslan-medium.onnx"
 fi
 if [ ! -f "$DATA/models/piper/ru_RU-ruslan-medium.onnx.json" ]; then
-  curl -L "$PIPER_BASE/ru_RU/ruslan/medium/ru_RU-ruslan-medium.onnx.json" \
-    -o "$DATA/models/piper/ru_RU-ruslan-medium.onnx.json" 2>/dev/null || \
   curl -L "$PIPER_BASE/ru_RU-ruslan-medium.onnx.json" \
     -o "$DATA/models/piper/ru_RU-ruslan-medium.onnx.json"
 fi
@@ -85,4 +83,4 @@ echo "Конфиг:    nano $CONFIG_DIR/config.json"
 echo "Запуск:    $ROOT/run.sh"
 echo
 echo "Для LM Studio сначала запусти его Local Server на 127.0.0.1:1234."
-echo "Wayland computer-use: ydotool желателен; проверить: command -v ydotool && systemctl status ydotoold"
+echo "Wayland computer-use: проверить ydotool: command -v ydotool && systemctl status ydotoold"
