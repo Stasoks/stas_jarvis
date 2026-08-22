@@ -41,8 +41,8 @@
     "pre_roll_ms": 900,
     "post_speech_silence_ms": 1100,
     "normalize_audio": true,
-    "whisper_initial_prompt": "Русская голосовая команда для персонального ассистента Джарвис. Команды произносятся естественно и могут начинаться сразу после слова Джарвис. Частые слова и фразы: открой, закрой, открой папку, папка с проектами, загрузки, документы, рабочий стол, браузер, Firefox, Chrome, Chromium, Хромиум, Telegram, YouTube, музыка, следующий трек, предыдущий трек, поставь на паузу, громкость, яркость, терминал, файлы, LM Studio, OpenRouter, GitHub, Python.",
-    "whisper_hotwords": "Джарвис открой закрой папка проекты загрузки документы рабочий стол браузер Firefox Chrome Chromium Хромиум Telegram YouTube музыка трек пауза громкость яркость терминал файлы LM Studio OpenRouter GitHub Python",
+    "whisper_initial_prompt": "Русская голосовая команда для персонального ассистента Джарвис. Команды произносятся естественно и могут начинаться сразу после слова Джарвис. Частые слова и фразы: открой, закрой, открой папку, папка с проектами, загрузки, документы, рабочий стол, браузер, Firefox, Chrome, Chromium, Хромиум, Telegram, YouTube, Яндекс Музыка, музыка, следующий трек, предыдущий трек, поставь на паузу, громкость, яркость, терминал, файлы, LM Studio, OpenRouter, GitHub, Python.",
+    "whisper_hotwords": "Джарвис открой закрой папка проекты загрузки документы рабочий стол браузер Firefox Chrome Chromium Хромиум Telegram YouTube Яндекс Музыка музыка трек пауза громкость яркость терминал файлы LM Studio OpenRouter GitHub Python",
     "wake_to_command_grace_ms": 0
   },
   "tts": {
@@ -60,16 +60,19 @@
     "fallback_model": "openrouter/free",
     "max_image_side": 1280,
     "jpeg_quality": 70,
-    "max_tokens": 450
+    "max_tokens": 700
   },
   "browser": {
-    "headless": false
+    "headless": false,
+    "persistent_profile": true
   },
   "agent": {
     "max_tool_rounds": 8,
     "max_tool_calls": 18,
     "research_tool_rounds": 12,
     "research_max_tool_calls": 24,
+    "gui_tool_rounds": 20,
+    "gui_max_tool_calls": 44,
     "history_messages": 8,
     "history_chars": 12000,
     "tool_result_chars": 5000
