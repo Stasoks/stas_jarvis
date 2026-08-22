@@ -6,7 +6,7 @@ from .logging_setup import setup_logging
 def main():
     setup_logging()
 
-    # Жёсткий wake-word guard: никаких partial_ratio по любому куску речи.
+    # Жёсткий wake-word guard.
     from .wake_guard import install_strict_wake_word
     install_strict_wake_word()
 
@@ -18,14 +18,24 @@ def main():
     from .window_tools import install_window_tools
     install_window_tools()
 
-    # Фоновый web_search/web_fetch через HTTP. Никаких внезапных окон Chromium
-    # при обычном исследовании или поиске информации.
+    # Фоновый web_search/web_fetch. Никаких окон Chromium для обычного research.
     from .web_tools import install_web_tools
     install_web_tools()
 
-    # On-demand screenshot + отдельный vision-вызов.
+    # Улучшенный интерактивный Playwright browser: persistent profile,
+    # DOM observation, stable refs, tabs, downloads, scroll/keyboard.
+    from .browser_tools_upgrade import install_browser_tools_upgrade
+    install_browser_tools_upgrade()
+
+    # On-demand screenshot + vision.
     from .screen_tools import install_screen_tools
     install_screen_tools()
+
+    # Полноценный computer-use слой поверх screenshot vision + mouse/keyboard.
+    # Для браузера DOM/Playwright надёжнее; computer_* нужен для native GUI
+    # или когда страница не отдаёт доступный DOM.
+    from .computer_tools import install_computer_tools
+    install_computer_tools()
 
     from .tui import JarvisApp
 
