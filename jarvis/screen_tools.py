@@ -25,8 +25,9 @@ def _result(ok: bool, message: str, **extra) -> str:
 class ScreenVision:
     """Capture the current desktop and ask a vision-capable model about it.
 
-    Screenshots are taken only on demand. They are downscaled/compressed before
-    upload so a simple "what is on my screen?" does not become a token bonfire.
+    By default vision follows the currently active provider/model. If that
+    provider cannot accept image input, a separately configured fallback may
+    be used. Screenshots are taken only on demand.
     """
 
     def __init__(self, config: dict[str, Any]):
@@ -59,7 +60,6 @@ class ScreenVision:
             except Exception:
                 log.exception("Screenshot command crashed: %s", cmd)
 
-        # Pillow can work on X11 and on some desktop setups through helpers.
         try:
             image = ImageGrab.grab(all_screens=True)
             image.save(raw, "PNG")
@@ -88,26 +88,58 @@ class ScreenVision:
 
         return out, width, height
 
-    def _provider(self) -> tuple[str, dict[str, Any], str]:
+    def _candidate_providers(self) -> list[tuple[str, dict[str, Any], str]]:
         providers = self.config.get("providers", {})
         vcfg = self.vision_cfg
+        candidates: list[tuple[str, dict[str, Any], str]] = []
+        seen: set[tuple[str, str]] = set()
 
+        def add(provider_name: str, model: str = "") -> None:
+            provider_name = str(provider_name or "").strip()
+            if not provider_name or provider_name not in providers:
+                return
+            provider = providers[provider_name]
+            resolved_model = str(model or provider.get("model") or "").strip()
+            if not resolved_model:
+                return
+            key = (provider_name, resolved_model)
+            if key in seen:
+                return
+            seen.add(key)
+            candidates.append((provider_name, provider, resolved_model))
+
+        # Default behavior: screen vision follows whatever model the user has
+        # selected in the TUI. This is especially useful for local VL models in
+        # LM Studio such as Qwen3-VL.
+        if vcfg.get("follow_active_provider", True):
+            active = str(self.config.get("active_provider") or "").strip()
+            add(active)
+
+        # Optional explicitly configured vision provider/model. This also
+        # doubles as a fallback for existing configs that still contain
+        # provider=openrouter/model=openrouter/free.
         requested = str(vcfg.get("provider") or "").strip()
-        if not requested:
-            requested = "openrouter" if "openrouter" in providers else self.config.get("active_provider", "")
-        if requested not in providers:
-            raise RuntimeError(f"Vision provider '{requested}' не найден в config.json")
+        requested_model = str(vcfg.get("model") or "").strip()
+        if requested and requested != "active":
+            if not requested_model and requested == "openrouter":
+                requested_model = "openrouter/free"
+            add(requested, requested_model)
 
-        provider = providers[requested]
-        model = str(vcfg.get("model") or "").strip()
-        if not model:
-            # OpenRouter's free router filters for image-understanding support
-            # when an image is present in the request.
-            model = "openrouter/free" if requested == "openrouter" else str(provider.get("model", ""))
-        if not model:
-            raise RuntimeError("Не настроена vision-модель")
+        fallback_provider = str(vcfg.get("fallback_provider") or "").strip()
+        fallback_model = str(vcfg.get("fallback_model") or "").strip()
+        if fallback_provider:
+            if not fallback_model and fallback_provider == "openrouter":
+                fallback_model = "openrouter/free"
+            add(fallback_provider, fallback_model)
 
-        return requested, provider, model
+        # Last resort: retain the old behavior only if nothing else was found.
+        if not candidates and "openrouter" in providers:
+            add("openrouter", "openrouter/free")
+
+        if not candidates:
+            raise RuntimeError("Не удалось подобрать vision provider/model")
+
+        return candidates
 
     def _headers(self, provider_name: str, provider: dict[str, Any]) -> dict[str, str]:
         headers = {"Content-Type": "application/json"}
@@ -120,27 +152,29 @@ class ScreenVision:
             headers["X-Title"] = "Stas Jarvis Screen Vision"
         return headers
 
-    def analyze(self, question: str) -> tuple[str, dict[str, Any]]:
-        if self.vision_cfg.get("enabled", True) is False:
-            raise RuntimeError("Screen vision отключён в config.json")
-
-        raw = self._capture_png()
-        jpeg, width, height = self._prepare_jpeg(raw)
-        encoded = base64.b64encode(jpeg.read_bytes()).decode("ascii")
-
-        provider_name, provider, model = self._provider()
+    def _request_one(
+        self,
+        provider_name: str,
+        provider: dict[str, Any],
+        model: str,
+        encoded: str,
+        width: int,
+        height: int,
+        image_bytes: int,
+        prompt: str,
+    ) -> tuple[str, dict[str, Any]]:
         url = str(provider["base_url"]).rstrip("/") + "/chat/completions"
-
-        prompt = question.strip() or "Кратко опиши, что сейчас видно на экране и какие важные элементы интерфейса доступны."
         payload = {
             "model": model,
             "messages": [
                 {
                     "role": "system",
                     "content": (
-                        "Ты модуль компьютерного зрения desktop-агента. Анализируй только текущий скриншот. "
-                        "Отвечай по-русски, конкретно. Если пользователь спрашивает про кнопку, окно, ошибку или "
-                        "элемент интерфейса, укажи где он находится словами. Не выдумывай невидимые элементы."
+                        "Ты модуль компьютерного зрения desktop-агента. Анализируй именно текущий скриншот. "
+                        "Отвечай по-русски и конкретно. Опиши видимые окна, текст, ошибки и элементы интерфейса, "
+                        "которые относятся к вопросу пользователя. Если пользователь спрашивает про кнопку или "
+                        "элемент интерфейса, укажи где он находится словами. Не выдумывай невидимые элементы. "
+                        "Не отвечай классификацией безопасности вроде 'safe/unsafe': нужен визуальный анализ экрана."
                     ),
                 },
                 {
@@ -162,20 +196,19 @@ class ScreenVision:
         timeout = float(provider.get("timeout_sec", 120))
         log.info(
             "SCREEN VISION request provider=%s model=%s image=%dx%d bytes=%d",
-            provider_name, model, width, height, jpeg.stat().st_size,
+            provider_name, model, width, height, image_bytes,
         )
 
         with httpx.Client(timeout=timeout, follow_redirects=True) as client:
             r = client.post(url, headers=self._headers(provider_name, provider), json=payload)
             if r.status_code >= 400:
                 body = r.text[:2000]
-                log.error("SCREEN VISION HTTP %s: %s", r.status_code, body)
-                raise RuntimeError(f"Vision API HTTP {r.status_code}: {body[:500]}")
+                raise RuntimeError(f"HTTP {r.status_code}: {body[:700]}")
             data = r.json()
 
         choices = data.get("choices") or []
         if not choices:
-            raise RuntimeError(f"Vision-модель вернула ответ без choices: {data}")
+            raise RuntimeError(f"ответ без choices: {str(data)[:700]}")
 
         message = choices[0].get("message") or {}
         content = message.get("content") or ""
@@ -188,7 +221,17 @@ class ScreenVision:
 
         answer = str(content).strip()
         if not answer:
-            raise RuntimeError("Vision-модель вернула пустой ответ")
+            raise RuntimeError("vision-модель вернула пустой ответ")
+
+        # A generic free router can occasionally pick a moderation/safety model.
+        # Treat that as a bad vision answer and continue to the next candidate.
+        low = answer.casefold().strip()
+        suspicious = (
+            len(answer) < 120
+            and any(x in low for x in ("user safety", "safe.", "unsafe", "safety:"))
+        )
+        if suspicious:
+            raise RuntimeError(f"модель вернула safety-классификацию вместо vision-ответа: {answer}")
 
         usage = data.get("usage") or {}
         log.info(
@@ -206,6 +249,35 @@ class ScreenVision:
             "height": height,
             "usage": usage,
         }
+
+    def analyze(self, question: str) -> tuple[str, dict[str, Any]]:
+        if self.vision_cfg.get("enabled", True) is False:
+            raise RuntimeError("Screen vision отключён в config.json")
+
+        raw = self._capture_png()
+        jpeg, width, height = self._prepare_jpeg(raw)
+        encoded = base64.b64encode(jpeg.read_bytes()).decode("ascii")
+        prompt = question.strip() or "Кратко опиши, что сейчас видно на экране и какие важные элементы интерфейса доступны."
+
+        errors: list[str] = []
+        for provider_name, provider, model in self._candidate_providers():
+            try:
+                return self._request_one(
+                    provider_name,
+                    provider,
+                    model,
+                    encoded,
+                    width,
+                    height,
+                    jpeg.stat().st_size,
+                    prompt,
+                )
+            except Exception as exc:
+                msg = f"{provider_name}/{model}: {type(exc).__name__}: {exc}"
+                errors.append(msg)
+                log.warning("SCREEN VISION candidate failed: %s", msg)
+
+        raise RuntimeError("Все vision-кандидаты провалились: " + " | ".join(errors))
 
 
 def _see_screen(self: ToolRegistry, question: str = "Что сейчас видно на экране?") -> str:
