@@ -36,13 +36,10 @@ def main():
 
     from .tui import JarvisApp
 
-    # Никаких regex fast-actions для обычных пользовательских команд.
-    # Смысл запроса и выбор tools делает сам агент.
+    # ВАЖНО: никаких semantic regex fast-actions. Обычные фразы всегда идут
+    # в Agent, который сам выбирает application/browser/system/computer tools.
 
-    # Прямые вопросы про экран можно безопасно отправлять сразу в vision.
-    from .screen_fast_action import install_screen_fast_action
-    install_screen_fast_action(JarvisApp)
-
+    # /screen остаётся только явной диагностической CLI-командой.
     from .screen_cli import install_screen_cli
     install_screen_cli(JarvisApp)
 
