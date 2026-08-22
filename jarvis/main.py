@@ -22,8 +22,7 @@ def main():
     from .web_tools import install_web_tools
     install_web_tools()
 
-    # Улучшенный интерактивный Playwright browser: persistent profile,
-    # DOM observation, stable refs, tabs, downloads, scroll/keyboard.
+    # Интерактивный persistent Playwright browser.
     from .browser_tools_upgrade import install_browser_tools_upgrade
     install_browser_tools_upgrade()
 
@@ -32,18 +31,15 @@ def main():
     install_screen_tools()
 
     # Полноценный computer-use слой поверх screenshot vision + mouse/keyboard.
-    # Для браузера DOM/Playwright надёжнее; computer_* нужен для native GUI
-    # или когда страница не отдаёт доступный DOM.
     from .computer_tools import install_computer_tools
     install_computer_tools()
 
     from .tui import JarvisApp
 
-    # Очевидные desktop-команды выполняются локально, без LLM.
-    from .fast_actions import install_fast_actions
-    install_fast_actions(JarvisApp)
+    # Никаких regex fast-actions для обычных пользовательских команд.
+    # Смысл запроса и выбор tools делает сам агент.
 
-    # Прямые вопросы про экран идут сразу в vision-модель.
+    # Прямые вопросы про экран можно безопасно отправлять сразу в vision.
     from .screen_fast_action import install_screen_fast_action
     install_screen_fast_action(JarvisApp)
 
